@@ -1,0 +1,50 @@
+2026-03-06 12:19:39.371 | INFO     | voice_dialog.core.logger:<module>:42 - 日志文件: E:\Claude\vedio\logs\voice_dialog_20260306_121939.log
+2026-03-06 12:19:40.675 | INFO     | voice_dialog.websocket_server:run_server:269 - 启动WebSocket服务器: ws://0.0.0.0:8765
+2026-03-06 12:21:50.893 | INFO     | voice_dialog.modules.acoustic_vad:_init_vad:41 - WebRTC VAD C扩展加载成功 (mode=3)
+2026-03-06 12:21:50.893 | INFO     | voice_dialog.modules.acoustic_vad:__init__:148 - 声学VAD 使用 WebRTC VAD (阈值: 400ms, 帧长: 20ms)
+2026-03-06 12:21:50.893 | INFO     | voice_dialog.modules.qwen_asr:_init_client:121 - Qwen ASR 17B 客户端初始化成功 (模型: paraformer-realtime-v2, 帧长: 20ms)
+2026-03-06 12:21:50.893 | INFO     | voice_dialog.modules.semantic_vad:_init_client:143 - 语义VAD 客户端初始化成功 (模型: Qwen3-Omni-Flash)
+2026-03-06 12:21:51.139 | INFO     | voice_dialog.modules.emotion:_init_client:114 - 情绪识别器初始化成功 (模型: Qwen3-Omni-Flash, 并行模式)
+2026-03-06 12:21:51.359 | INFO     | voice_dialog.modules.llm_planner:_init_client:114 - LLM客户端初始化成功
+2026-03-06 12:21:51.359 | INFO     | voice_dialog.core.tool_registry:register_tool:118 - 注册工具: get_current_time (分类: query)
+2026-03-06 12:21:51.359 | INFO     | voice_dialog.core.tool_registry:register_tool:118 - 注册工具: get_weather (分类: query)
+2026-03-06 12:21:51.359 | INFO     | voice_dialog.core.tool_registry:register_tool:118 - 注册工具: search_web (分类: query)
+2026-03-06 12:21:51.359 | INFO     | voice_dialog.core.tool_registry:register_tool:118 - 注册工具: set_reminder (分类: productivity)
+2026-03-06 12:21:51.359 | INFO     | voice_dialog.core.tool_registry:register_tool:118 - 注册工具: play_music (分类: entertainment)
+2026-03-06 12:21:51.359 | INFO     | voice_dialog.core.tool_registry:register_tool:118 - 注册工具: control_device (分类: smart_home)
+2026-03-06 12:21:51.359 | INFO     | voice_dialog.modules.tools:_register_builtin_tools_to_registry:357 - 内置工具已注册到 ToolRegistry
+2026-03-06 12:21:51.359 | INFO     | voice_dialog.system:__init__:122 - 语音对话系统v3.2初始化完成 - 流式架构 + 语义打断
+2026-03-06 12:21:51.360 | INFO     | voice_dialog.websocket_server:connect:61 - 客户端连接: test_client
+2026-03-06 12:21:51.874 | INFO     | voice_dialog.system:process_text:621 - 处理文本输入: '帮我介绍下三国演义'
+2026-03-06 12:21:51.875 | DEBUG    | voice_dialog.core.state_machine:transition_to:47 - 状态转换: idle -> listening (文本输入开始)
+2026-03-06 12:21:51.875 | DEBUG    | voice_dialog.core.state_machine:transition_to:47 - 状态转换: listening -> processing (文本输入处理)
+2026-03-06 12:21:54.576 | INFO     | voice_dialog.modules.emotion:finalize_sentence:170 - 句子情绪识别完成: neutral (置信度: 0.98)
+2026-03-06 12:21:54.576 | DEBUG    | voice_dialog.modules.emotion:reset_sentence:331 - 情绪识别器句子状态已重置
+2026-03-06 12:21:54.576 | DEBUG    | voice_dialog.core.state_machine:transition_to:47 - 状态转换: processing -> thinking (开始LLM处理)
+2026-03-06 12:21:54.576 | INFO     | voice_dialog.system:_process_with_llm:552 - 融合输入 LLM: 文本='帮我介绍下三国演义', 情绪=neutral
+2026-03-06 12:22:02.441 | DEBUG    | voice_dialog.core.state_machine:transition_to:47 - 状态转换: thinking -> speaking (语音合成)
+2026-03-06 12:22:06.084 | INFO     | voice_dialog.system:_process_with_llm:594 - 对话完成 - 用户: '帮我介绍下三国演义' -> 助手: '《三国演义》是中国古典四大名著之一，全名为《三国志通俗演义》，作者一般认为是元末明初的文学家罗贯中。...'
+2026-03-06 12:22:06.084 | DEBUG    | voice_dialog.core.state_machine:transition_to:47 - 状态转换: speaking -> idle (处理完成)
+2026-03-06 12:22:06.084 | INFO     | voice_dialog.system:_stop_tts_for_interrupt:317 - [打断] TTS播报已停止，继续接收用户输入...
+2026-03-06 12:22:06.084 | INFO     | voice_dialog.system:process_text:621 - 处理文本输入: '帮我介绍下西游记，里面的孙悟空很厉害，请介绍下'
+2026-03-06 12:22:06.084 | DEBUG    | voice_dialog.core.state_machine:transition_to:47 - 状态转换: idle -> listening (文本输入开始)
+2026-03-06 12:22:06.085 | DEBUG    | voice_dialog.core.state_machine:transition_to:47 - 状态转换: listening -> processing (文本输入处理)
+2026-03-06 12:22:06.106 | ERROR    | voice_dialog.websocket_server:send_json:75 - 发送消息失败: 
+2026-03-06 12:22:06.106 | INFO     | voice_dialog.core.state_machine:force_state:68 - 强制状态转换: processing -> idle (手动打断)
+2026-03-06 12:22:06.106 | ERROR    | voice_dialog.websocket_server:send_json:75 - 发送消息失败: 
+2026-03-06 12:22:06.106 | ERROR    | voice_dialog.websocket_server:send_json:75 - 发送消息失败: 
+2026-03-06 12:22:06.107 | ERROR    | voice_dialog.websocket_server:send_json:75 - 发送消息失败: 
+2026-03-06 12:22:08.571 | INFO     | voice_dialog.modules.emotion:finalize_sentence:170 - 句子情绪识别完成: positive (置信度: 0.92)
+2026-03-06 12:22:08.571 | DEBUG    | voice_dialog.modules.emotion:reset_sentence:331 - 情绪识别器句子状态已重置
+2026-03-06 12:22:08.571 | WARNING  | voice_dialog.core.state_machine:transition_to:53 - 无效状态转换: idle -> thinking
+2026-03-06 12:22:08.571 | INFO     | voice_dialog.system:_process_with_llm:552 - 融合输入 LLM: 文本='帮我介绍下西游记，里面的孙悟空很厉害，请介绍下', 情绪=positive
+2026-03-06 12:22:08.572 | ERROR    | voice_dialog.websocket_server:send_json:75 - 发送消息失败: 
+2026-03-06 12:22:08.573 | ERROR    | voice_dialog.websocket_server:send_json:75 - 发送消息失败: Cannot call "send" once a close message has been sent.
+2026-03-06 12:22:22.610 | WARNING  | voice_dialog.core.state_machine:transition_to:53 - 无效状态转换: idle -> speaking
+2026-03-06 12:22:22.830 | ERROR    | voice_dialog.websocket_server:send_json:75 - 发送消息失败: Cannot call "send" once a close message has been sent.
+2026-03-06 12:22:28.951 | INFO     | voice_dialog.system:_process_with_llm:594 - 对话完成 - 用户: '帮我介绍下西游记，里面的孙悟空很厉害，请介绍下' -> 助手: '很高兴能帮到您！哈哈，说到《西游记》和孙悟空——那可真是“天地生成灵混仙，花果山中一老猿”，又酷又飒...'
+2026-03-06 12:22:28.951 | WARNING  | voice_dialog.core.state_machine:transition_to:53 - 无效状态转换: idle -> idle
+2026-03-06 12:22:28.951 | ERROR    | voice_dialog.websocket_server:send_json:75 - 发送消息失败: Cannot call "send" once a close message has been sent.
+2026-03-06 12:22:28.958 | ERROR    | voice_dialog.websocket_server:send_json:75 - 发送消息失败: Cannot call "send" once a close message has been sent.
+2026-03-06 12:22:28.959 | ERROR    | voice_dialog.websocket_server:websocket_endpoint:166 - WebSocket错误: Cannot call "receive" once a disconnect message has been received.
+2026-03-06 12:22:28.959 | INFO     | voice_dialog.websocket_server:disconnect:68 - 客户端断开: test_client

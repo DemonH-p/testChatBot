@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "WebSearch",
+      "WebFetch(domain:help.aliyun.com)",
+      "Bash(pip:*)",
+      "Bash(curl:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(ls:*)",
+      "Bash(cp:*)"
+    ]
+  }
+}

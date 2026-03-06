@@ -1,0 +1,2 @@
+2026-03-06 14:47:58.110 | INFO     | voice_dialog.core.logger:<module>:42 - 日志文件: E:\Claude\vedio\logs\voice_dialog_20260306_144758.log
+2026-03-06 14:47:59.460 | INFO     | voice_dialog.websocket_server:run_server:269 - 启动WebSocket服务器: ws://0.0.0.0:8765
