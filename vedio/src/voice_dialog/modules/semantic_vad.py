@@ -25,15 +25,29 @@ from ..core.types import SemanticState, SemanticVADResult
 from ..core.config import get_config
 
 
+class VoiceValidity:
+    """人声有效性判断结果"""
+    VALID = "valid"           # 有效人声（有实际语义内容）
+    NOISE = "noise"           # 噪声/环境音
+    FILLER = "filler"         # 语气助词/停顿词（嗯、啊、呃等）
+    PENDING = "pending"       # 待判断（文本太短）
+
+
 class SemanticVADProcessor:
     """
     语义VAD流式处理器
 
-    使用 Qwen3-Omni-Flash 模型进行流式语义判断
+    使用 Qwen 模型进行流式语义判断
     边接收ASR文本边判断语义完整性
+
+    v3.2 优化：
+    - 添加打断模式，打断后使用更宽松的判断标准
+    - 支持快速触发关键词
+    - 有效人声判断（区分语气助词和有效内容）
     """
 
-    MODEL_NAME = "Qwen3-Omni-Flash"
+    # 使用 qwen-plus 进行文本语义分析（OpenAI兼容模式）
+    MODEL_NAME = "qwen-plus"
 
     # 语义判断提示词
     SEMANTIC_PROMPT = """分析用户的输入文本，判断用户的表达状态。
@@ -57,6 +71,48 @@ class SemanticVADProcessor:
     "reason": "判断理由"
 }"""
 
+    # ========== v3.1 打断模式关键词 ==========
+    # 打断场景下，这些关键词可以立即触发完整判断
+    INTERRUPT_TRIGGER_WORDS = [
+        # 停止类
+        "停", "停下", "停止", "不要", "别", "闭嘴", "安静",
+        # 替换类
+        "换", "换一个", "下一个", "算了", "不", "取消",
+        # 疑问类（打断后问问题）
+        "什么", "为什么", "怎么", "哪", "谁",
+        # 确认类
+        "好的", "行", "可以", "嗯", "对", "是",
+        # 短指令
+        "帮我", "我要", "我想", "给我",
+    ]
+
+    # 打断模式下更宽松的完整判断关键词
+    INTERRUPT_COMPLETE_WORDS = [
+        "停", "换", "算", "好", "行", "对", "是", "不", "要", "有",
+        "帮", "给", "想", "查", "找", "看", "听", "说", "问",
+    ]
+
+    # ========== v3.2 有效人声判断关键词 ==========
+    # 语气助词/停顿词（这些不算有效人声）
+    FILLER_WORDS = [
+        "嗯", "啊", "呃", "额", "唔", "哦", "噢", "哈", "嘿", "哎",
+        "那个", "就是", "这个", "然后", "所以", "但是", "其实",
+        "呃呃", "啊啊", "嗯嗯",
+    ]
+
+    # 有效人声关键词（出现这些词立即确认为有效人声）
+    VALID_VOICE_WORDS = [
+        # 指令类
+        "帮我", "我要", "我想", "给我", "请", "查", "找", "看", "听",
+        "打开", "关闭", "播放", "设置", "停止", "开始", "换",
+        # 疑问类
+        "什么", "怎么", "为什么", "哪", "谁", "几", "多少", "吗", "呢",
+        # 确认类
+        "好的", "行", "可以", "对", "是", "不", "好",
+        # 停止类
+        "停", "算", "取消", "不要", "别",
+    ]
+
     def __init__(self):
         self.config = get_config().semantic_vad if hasattr(get_config(), 'semantic_vad') else {}
         self.api_key = get_config().qwen_omni.get("api_key", "")
@@ -67,6 +123,9 @@ class SemanticVADProcessor:
         self._last_state = SemanticState.CONTINUING
         self._last_confidence = 0.5
         self._judgment_history: List[Dict] = []
+
+        # v3.1 打断模式标志
+        self._interrupt_mode = False
 
         # 配置
         self.min_text_length = self.config.get("streaming", {}).get("min_text_length", 2)
@@ -108,6 +167,15 @@ class SemanticVADProcessor:
                 reason="文本为空，继续等待"
             )
 
+        # v3.1: 打断模式下使用快速判断
+        if self._interrupt_mode:
+            result = self._judge_interrupt_mode(text)
+            if result.state == SemanticState.COMPLETE:
+                self._last_state = result.state
+                self._last_confidence = result.confidence
+                logger.info(f"[打断模式] 快速判断完整: '{text}'")
+                return result
+
         # 如果是最终结果，使用更宽松的判断
         if is_final:
             result = self._judge_with_rules(text)
@@ -138,6 +206,130 @@ class SemanticVADProcessor:
         })
 
         return result
+
+    def _judge_interrupt_mode(self, text: str) -> SemanticVADResult:
+        """
+        v3.1 打断模式下的快速判断
+
+        打断后用户说话通常很短，使用更宽松的判断标准
+        """
+        text = text.strip()
+        clean_text = text
+
+        # 去除噪声词
+        noise_words = ["嗯", "啊", "呃", "那个", "就是"]
+        for noise in noise_words:
+            clean_text = clean_text.replace(noise, "")
+        clean_text = clean_text.strip()
+
+        # 1. 检查是否有打断触发词（立即完整）
+        for trigger in self.INTERRUPT_TRIGGER_WORDS:
+            if trigger in text:
+                return SemanticVADResult(
+                    state=SemanticState.COMPLETE,
+                    confidence=0.95,
+                    reason=f"[打断模式] 检测到触发词: {trigger}"
+                )
+
+        # 2. 打断模式下，有1个以上关键词就判断完整
+        keyword_count = sum(1 for kw in self.INTERRUPT_COMPLETE_WORDS if kw in clean_text)
+        if keyword_count >= 1 and len(clean_text) >= 1:
+            return SemanticVADResult(
+                state=SemanticState.COMPLETE,
+                confidence=0.85,
+                reason="[打断模式] 包含意图关键词"
+            )
+
+        # 3. 打断模式下，有效文本长度>=2就判断完整
+        if len(clean_text) >= 2:
+            return SemanticVADResult(
+                state=SemanticState.COMPLETE,
+                confidence=0.8,
+                reason="[打断模式] 文本长度足够"
+            )
+
+        # 4. 有任何实际内容，可能完整
+        if len(clean_text) >= 1:
+            return SemanticVADResult(
+                state=SemanticState.COMPLETE,
+                confidence=0.7,
+                reason="[打断模式] 有内容，判断完整"
+            )
+
+        # 继续等待
+        return SemanticVADResult(
+            state=SemanticState.CONTINUING,
+            confidence=0.5,
+            reason="[打断模式] 继续等待"
+        )
+
+    def set_interrupt_mode(self, enabled: bool):
+        """
+        设置打断模式
+
+        打断模式下使用更宽松的判断标准，加快响应速度
+        """
+        self._interrupt_mode = enabled
+        if enabled:
+            logger.info("语义VAD 进入打断模式（快速判断）")
+        else:
+            logger.debug("语义VAD 退出打断模式")
+
+    def check_voice_validity(self, text: str) -> str:
+        """
+        v3.2 检查是否是有效人声
+
+        用于打断判断：区分有效人声和噪声/语气助词
+
+        Args:
+            text: ASR流式输出的文本
+
+        Returns:
+            VoiceValidity:
+            - VALID: 有效人声，应立即停止播报
+            - FILLER: 语气助词/停顿词，不应打断
+            - NOISE: 噪声，不应打断
+            - PENDING: 待判断，继续等待
+        """
+        text = text.strip()
+
+        # 空文本，继续等待
+        if not text:
+            return VoiceValidity.PENDING
+
+        # 检查是否有有效人声关键词
+        for word in self.VALID_VOICE_WORDS:
+            if word in text:
+                logger.info(f"[有效人声] 检测到关键词: '{word}'")
+                return VoiceValidity.VALID
+
+        # 去除语气助词后的文本
+        clean_text = text
+        for filler in self.FILLER_WORDS:
+            clean_text = clean_text.replace(filler, "")
+        clean_text = clean_text.strip()
+
+        # 如果去除语气助词后还有足够内容，认为是有效人声
+        if len(clean_text) >= 2:
+            logger.info(f"[有效人声] 有效内容: '{clean_text}'")
+            return VoiceValidity.VALID
+
+        # 如果只有1个有效字符，可能是有效人声开始
+        if len(clean_text) == 1:
+            # 检查是否是常见单字指令
+            single_valid = ["停", "好", "行", "对", "是", "不", "换", "算"]
+            if clean_text in single_valid:
+                logger.info(f"[有效人声] 单字指令: '{clean_text}'")
+                return VoiceValidity.VALID
+            return VoiceValidity.PENDING
+
+        # 只有语气助词
+        if text and not clean_text:
+            logger.debug(f"[语气助词] 忽略: '{text}'")
+            return VoiceValidity.FILLER
+
+        # 继续等待
+        return VoiceValidity.PENDING
 
     async def _judge_with_model(self, text: str) -> SemanticVADResult:
         """使用 Qwen Omni Flash 模型进行语义判断"""
@@ -312,6 +504,7 @@ class SemanticVADProcessor:
         self._last_state = SemanticState.CONTINUING
         self._last_confidence = 0.5
         self._judgment_history.clear()
+        self._interrupt_mode = False  # v3.1 重置打断模式
         logger.debug("语义VAD 状态已重置")
 
     def get_judgment_history(self) -> List[Dict]:
@@ -323,6 +516,9 @@ class StreamingSemanticVAD:
     """
     流式语义VAD处理器
     与ASR流式输出配合使用
+
+    v3.1 优化：
+    - 支持打断模式，打断后快速判断
     """
 
     def __init__(self):
@@ -330,11 +526,17 @@ class StreamingSemanticVAD:
         self._is_active = False
         self._result_queue = asyncio.Queue()
 
-    async def start(self):
-        """启动流式处理"""
+    async def start(self, interrupt_mode: bool = False):
+        """
+        启动流式处理
+
+        Args:
+            interrupt_mode: 是否为打断模式（使用更宽松的判断标准）
+        """
         self._is_active = True
         self.processor.reset()
-        logger.info("流式语义VAD 已启动")
+        self.processor.set_interrupt_mode(interrupt_mode)
+        logger.info(f"流式语义VAD 已启动 (打断模式: {interrupt_mode})")
 
     async def process_text(self, text: str, is_final: bool = False) -> SemanticVADResult:
         """

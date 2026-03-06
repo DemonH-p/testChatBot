@@ -6,6 +6,7 @@ v3.0 特性：
 - 流式ASR + 流式语义VAD
 - 并行情绪识别
 - 打断支持
+- 实时时延监控
 """
 import asyncio
 import json
@@ -19,7 +20,7 @@ from fastapi.responses import FileResponse
 import uvicorn
 
 from .system import VoiceDialogSystem
-from .core import DialogState, DialogResult
+from .core import DialogState, DialogResult, latency_tracker
 
 
 app = FastAPI(title="全双工语音对话系统 v3.0")
@@ -52,6 +53,9 @@ class ConnectionManager:
         ))
         system.on_tool_executing(lambda tool_name, tool_args: asyncio.create_task(
             self.send_tool_executing(client_id, tool_name, tool_args)
+        ))
+        system.on_latency_update(lambda data: asyncio.create_task(
+            self.send_latency_update(client_id, data)
         ))
 
         logger.info(f"客户端连接: {client_id}")
@@ -120,6 +124,15 @@ class ConnectionManager:
         await self.send_json(client_id, {
             "type": "partial_asr",
             "data": {"text": text}
+        })
+
+    async def send_latency_update(self, client_id: str, data):
+        """发送时延更新"""
+        if data is None:
+            return
+        await self.send_json(client_id, {
+            "type": "latency_update",
+            "data": data.to_dict() if hasattr(data, 'to_dict') else data
         })
 
     def get_system(self, client_id: str) -> VoiceDialogSystem:
@@ -205,6 +218,43 @@ async def get_index():
 async def health_check():
     """健康检查"""
     return {"status": "ok", "version": "3.0"}
+
+
+@app.get("/latency/history")
+async def get_latency_history(limit: int = 10):
+    """获取时延历史记录"""
+    history = latency_tracker.get_history(limit)
+    return {
+        "history": [h.to_dict() for h in history],
+        "total": len(history)
+    }
+
+
+@app.get("/latency/stats")
+async def get_latency_stats():
+    """获取时延统计信息"""
+    return latency_tracker.get_stats()
+
+
+@app.get("/latency/current")
+async def get_current_latency():
+    """获取当前时延数据"""
+    current = latency_tracker.get_current()
+    if current:
+        return current.to_dict()
+    return {"status": "no_active_sentence"}
+
+
+@app.get("/monitor")
+async def get_monitor():
+    """返回时延监控页面"""
+    return FileResponse("web/latency_monitor.html")
+
+
+@app.get("/interrupt-test")
+async def get_interrupt_test():
+    """返回打断测试页面"""
+    return FileResponse("web/interrupt_test.html")
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8765):

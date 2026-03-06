@@ -108,9 +108,9 @@ TTS:
 ACOUSTIC_VAD:
   engine: "webrtc"
   aggressiveness: 3  # 0-3, 3最激进
-  frame_duration_ms: 20  # v3.0: 帧长20ms
-  silence_threshold_ms: 400  # v3.0: 阈值<500ms
-  padding_duration_ms: 200
+  frame_duration_ms: 20  # 帧长20ms
+  silence_threshold_ms: 400  # 静音阈值400ms
+  padding_duration_ms: 150
 
 # WebSocket服务器配置
 SERVER:

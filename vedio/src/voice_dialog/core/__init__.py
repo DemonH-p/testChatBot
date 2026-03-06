@@ -20,6 +20,7 @@ from .types import (
 )
 from .config import Config, get_config
 from .state_machine import DialogStateMachine, SemanticStateMachine
+from .latency import latency_tracker, SentenceLatency, LatencyRecord
 
 __all__ = [
     # 类型
@@ -44,4 +45,8 @@ __all__ = [
     # 状态机
     "DialogStateMachine",
     "SemanticStateMachine",
+    # 时延追踪
+    "latency_tracker",
+    "SentenceLatency",
+    "LatencyRecord",
 ]

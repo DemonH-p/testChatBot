@@ -123,10 +123,10 @@ class AcousticVAD:
         self._silence_callbacks: List[Callable] = []  # 静音回调（给语义VAD判断）
         self._interrupt_callbacks: List[Callable] = []  # 打断回调
 
-        # 配置参数 - v3.0 更新
+        # 配置参数 - v3.1 更新：静音阈值400ms
         self.frame_duration_ms = self.config.get("frame_duration_ms", 20)  # 帧长20ms
-        self.silence_threshold_ms = self.config.get("silence_threshold_ms", 400)  # 阈值<500ms
-        self.padding_duration_ms = self.config.get("padding_duration_ms", 200)  # padding减少
+        self.silence_threshold_ms = self.config.get("silence_threshold_ms", 400)  # 阈值400ms
+        self.padding_duration_ms = self.config.get("padding_duration_ms", 150)  # padding减少
         self.sample_rate = 16000
         self.aggressiveness = self.config.get("aggressiveness", 3)
 
