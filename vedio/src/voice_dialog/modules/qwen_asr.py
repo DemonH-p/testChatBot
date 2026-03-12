@@ -23,7 +23,7 @@ try:
         OmniRealtimeCallback,
         TranscriptionParams
     )
-    from dashscope.audio.qwen_omni import MultiModalty
+    from dashscope.audio.qwen_omni import MultiModality
     HAS_DASHSCOPE = True
 except ImportError:
     HAS_DASHSCOPE = False
@@ -122,7 +122,7 @@ class OmniAsrCallback(OmniRealtimeCallback):
             if response['type'] == 'conversation.item.input_audio_transcription.text':
                 # 部分结果
                 stash_text = response.get('stash', '')
-                logger.info(f'ASR情绪识别：{response.get('emotion', '')}')
+                logger.info(f'ASR情绪识别：{response.get("emotion", "")}')
                 if stash_text:
                     self.partial_text = stash_text
                     self.result_text = stash_text
@@ -153,7 +153,7 @@ class OmniAsrCallback(OmniRealtimeCallback):
                         elif self._on_result:
                             self._result_queue.append((final_text, True))
         except Exception as e:
-            logger.error(f"Omni ASR 回调错误")
+            logger.error(f"Omni ASR 回调错误: {e}")
 
     def on_error(self, error):
         logger.error(f"Omni ASR 错误：{error}")
@@ -254,7 +254,7 @@ class QwenASRProcessor:
             )
             
             self._conversation.update_session(
-                output_modalities=[MultiModalty.TEXT],
+                output_modalities=[MultiModality.TEXT],
                 enable_input_audio_transcription_params=True,
                 transcription_params=transcription_params
             )
