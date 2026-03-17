@@ -303,21 +303,10 @@ class VoiceDialogSystem:
             should_finalize = False
             finalize_reason = ""
 
-            # 条件1: 语义VAD判断完整 + 静音时间足够
-            # v3.6: 即使语义完整，也需要等待静音确认用户确实说完了
-            # 避免用户说多个句子时，第一个句子结束就提前结束语音段
+            # 条件1: 语义VAD判断完整
             if self.semantic_vad.processor.is_complete():
-                # 语义完整，但需要等待静音确认
-                # 如果静音时间超过阈值，确认用户说完了
-                if silence_elapsed >= self.SILENCE_THRESHOLD_MS:
-                    should_finalize = True
-                    finalize_reason = f"语义完整+静音确认({silence_elapsed:.0f}ms)"
-                elif silence_elapsed >= 200:  # 至少200ms静音
-                    # 有一定静音时间，检查是否有后续语音的迹象
-                    # 如果文本以句号结尾，说明是一个完整句子，可以稍微缩短等待时间
-                    if self._asr_text_buffer.rstrip().endswith(('。', '！', '？', '.', '!', '?')):
-                        should_finalize = True
-                        finalize_reason = f"语义完整+句号结尾+静音({silence_elapsed:.0f}ms)"
+                should_finalize = True
+                finalize_reason = "语义完整"
 
             # 条件2: 静音时间超过阈值且有ASR文本
             elif silence_elapsed >= self.MAX_SILENCE_WAIT_MS and self._asr_text_buffer:
@@ -620,141 +609,6 @@ class VoiceDialogSystem:
 
             if semantic_result.state == SemanticState.COMPLETE:
                 logger.info(f"语义完整: '{text}'")
-
-    def _smart_merge_text(self, text1: str, text2: str) -> str:
-        """
-        智能合并两个ASR文本，避免重复
-
-        ASR的stash_text是逐句更新的，后面的句子可能覆盖前面的句子。
-        此方法通过检测重叠来智能合并两个文本。
-
-        Args:
-            text1: 缓冲区文本（较早的识别结果）
-            text2: ASR最终结果（较晚的识别结果）
-
-        Returns:
-            合并后的完整文本
-
-        Examples:
-            _smart_merge_text("我明天想去广州，帮我规划", "帮我规划一下行程。")
-            -> "我明天想去广州，帮我规划一下行程。"
-
-            _smart_merge_text("我明天准备去上海", "我明天准备去上海，可以帮我规划行程。")
-            -> "我明天准备去上海，可以帮我规划行程。"
-        """
-        if not text1:
-            return text2
-        if not text2:
-            return text1
-
-        # 情况1: text2 包含 text1（text2是更完整的版本）
-        if text1 in text2:
-            return text2
-
-        # 情况2: text1 包含 text2（text1是更完整的版本）
-        if text2 in text1:
-            return text1
-
-        # 情况3: 检测重叠部分（text1的后缀与text2的前缀重叠）
-        # 找出最长的重叠部分
-        max_overlap = 0
-        for i in range(1, min(len(text1), len(text2)) + 1):
-            if text1[-i:] == text2[:i]:
-                max_overlap = i
-
-        if max_overlap > 0:
-            # 有重叠，合并时去除重复部分
-            merged = text1 + text2[max_overlap:]
-            logger.debug(f"文本合并（重叠{max_overlap}字符）: '{text1}' + '{text2}' -> '{merged}'")
-            return merged
-
-        # 情况4: 没有重叠，检查是否是同一句话的不同识别结果
-        # 如果两个文本相似度很高，选择更长的那个
-        from difflib import SequenceMatcher
-        similarity = SequenceMatcher(None, text1, text2).ratio()
-        if similarity > 0.7:
-            # 相似度高，选择更长的
-            return text1 if len(text1) >= len(text2) else text2
-
-        # 情况5: 完全不相关，可能是两个独立的句子
-        # 检查是否text2是text1的延续（text2以标点符号开头或text1以标点符号结尾）
-        if text1 and text1[-1] in '，。！？、；：':
-            # text1以标点结尾，text2是新句子
-            return text1 + text2
-        elif text2 and text2[0] in '，。！？、；：':
-            # text2以标点开头，直接拼接
-            return text1 + text2
-
-        # 默认：添加逗号分隔后拼接
-        return text1 + '，' + text2
-
-    def _smart_merge_text(self, text1: str, text2: str) -> str:
-        """
-        智能合并两个ASR文本，避免重复
-
-        ASR的stash_text是逐句更新的，后面的句子可能覆盖前面的句子。
-        此方法通过检测重叠来智能合并两个文本。
-
-        Args:
-            text1: 缓冲区文本（较早的识别结果）
-            text2: ASR最终结果（较晚的识别结果）
-
-        Returns:
-            合并后的完整文本
-
-        Examples:
-            _smart_merge_text("我明天想去广州，帮我规划", "帮我规划一下行程。")
-            -> "我明天想去广州，帮我规划一下行程。"
-
-            _smart_merge_text("我明天准备去上海", "我明天准备去上海，可以帮我规划行程。")
-            -> "我明天准备去上海，可以帮我规划行程。"
-        """
-        if not text1:
-            return text2
-        if not text2:
-            return text1
-
-        # 情况1: text2 包含 text1（text2是更完整的版本）
-        if text1 in text2:
-            return text2
-
-        # 情况2: text1 包含 text2（text1是更完整的版本）
-        if text2 in text1:
-            return text1
-
-        # 情况3: 检测重叠部分（text1的后缀与text2的前缀重叠）
-        # 找出最长的重叠部分
-        max_overlap = 0
-        for i in range(1, min(len(text1), len(text2)) + 1):
-            if text1[-i:] == text2[:i]:
-                max_overlap = i
-
-        if max_overlap > 0:
-            # 有重叠，合并时去除重复部分
-            merged = text1 + text2[max_overlap:]
-            logger.debug(f"文本合并（重叠{max_overlap}字符）: '{text1}' + '{text2}' -> '{merged}'")
-            return merged
-
-        # 情况4: 没有重叠，检查是否是同一句话的不同识别结果
-        # 如果两个文本相似度很高，选择更长的那个
-        from difflib import SequenceMatcher
-        similarity = SequenceMatcher(None, text1, text2).ratio()
-        if similarity > 0.7:
-            # 相似度高，选择更长的
-            return text1 if len(text1) >= len(text2) else text2
-
-        # 情况5: 完全不相关，可能是两个独立的句子
-        # 检查是否text2是text1的延续（text2以标点符号开头或text1以标点符号结尾）
-        if text1 and text1[-1] in '，。！？、；：':
-            # text1以标点结尾，text2是新句子
-            return text1 + text2
-        elif text2 and text2[0] in '，。！？、；：':
-            # text2以标点开头，直接拼接
-            return text1 + text2
-
-        # 默认：添加逗号分隔后拼接
-        return text1 + '，' + text2
-
     async def _finalize_streaming(self) -> Optional[DialogResult]:
         """
         结束流式处理，进入融合阶段
@@ -777,18 +631,12 @@ class VoiceDialogSystem:
             await self.dialog_state.force_state(DialogState.PROCESSING, "语音段结束")
 
         try:
-            # 1. 保存当前缓冲区文本（在stop_stream之前，避免被后续回调覆盖）
-            buffered_text = self._asr_text_buffer.strip()
-
-            # 2. 获取最终ASR结果
+            # 1. 获取最终ASR结果
             latency_tracker.mark_end("asr_streaming")
             asr_result = await self.asr_processor.stop_stream()
-            asr_final_text = asr_result.text.strip()
+            recognized_text = asr_result.text
 
-            # 3. 智能合并文本
-            # ASR的stash_text是逐句更新的，后面的句子可能覆盖前面的句子
-            recognized_text = self._smart_merge_text(buffered_text, asr_final_text)
-            logger.info(f"最终识别文本: '{recognized_text}' (缓冲区: '{buffered_text}', ASR最终: '{asr_final_text}')")
+            logger.info(f"ASR最终结果: '{recognized_text}'")
 
             # 更新时延追踪的最终文本
             latency_tracker.update_text(recognized_text)
