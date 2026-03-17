@@ -133,6 +133,11 @@ class VoiceDialogSystem:
         self._audio_processor_task: Optional[asyncio.Task] = None  # 音频处理后台任务
         self._is_processing_audio = False  # 是否正在处理音频
 
+        # ========== v3.6 语义完整判断优化 ==========
+        self._last_asr_text = ""  # 上一次ASR文本，用于检测是否有新内容
+        self._last_asr_update_time: Optional[float] = None  # 上次ASR更新时间
+        self._semantic_complete_time: Optional[float] = None  # 语义判断完整的时间
+
         # ========== TTS 开关控制 ==========
         self._tts_enabled = True  # TTS 默认开启
         self._on_tts_state_change_callbacks: List[Callable] = []  # TTS 状态变化回调
@@ -290,10 +295,8 @@ class VoiceDialogSystem:
             self._last_speech_time = current_time
             self._silence_start_time = None
 
-        # 5. 检测到静音，检查是否应该结束
+        # 5. 检测到静音，检查是否应该结束语音段
         elif vad_result["event"] == "silence_detected" and self._is_streaming:
-            silence_duration = vad_result["silence_duration"]
-
             if self._silence_start_time is None:
                 self._silence_start_time = current_time
 
@@ -303,17 +306,19 @@ class VoiceDialogSystem:
             should_finalize = False
             finalize_reason = ""
 
-            # 条件1: 语义VAD判断完整
+            # v3.6: 条件1 - 语义完整时检查后续输入
             if self.semantic_vad.processor.is_complete():
-                should_finalize = True
-                finalize_reason = "语义完整"
+                has_following_input = self._check_following_input(current_time)
+                if not has_following_input:
+                    should_finalize = True
+                    finalize_reason = "语义完整+无后续输入"
 
-            # 条件2: 静音时间超过阈值且有ASR文本
+            # 条件2: 静音时间超过最大阈值且有ASR文本
             elif silence_elapsed >= self.MAX_SILENCE_WAIT_MS and self._asr_text_buffer:
                 should_finalize = True
                 finalize_reason = f"静音超时({silence_elapsed:.0f}ms)"
 
-            # 条件3: 有足够文本且静音超过500ms（与静音超时一致）
+            # 条件3: 有足够文本且静音超过阈值
             elif silence_elapsed >= self.SILENCE_THRESHOLD_MS and len(self._asr_text_buffer) >= 5:
                 should_finalize = True
                 finalize_reason = "静音+文本充足"
@@ -580,7 +585,15 @@ class VoiceDialogSystem:
 
     async def _on_asr_result(self, text: str, is_final: bool):
         """ASR流式结果回调"""
+        import time
+        current_time = time.time() * 1000
+
         self._asr_text_buffer = text
+
+        # v3.6: 记录ASR更新，用于检测是否有新内容
+        if text != self._last_asr_text:
+            self._last_asr_text = text
+            self._last_asr_update_time = current_time
 
         # 追踪ASR首字延迟
         if not self._first_asr_received and text:
@@ -608,7 +621,56 @@ class VoiceDialogSystem:
             self.semantic_state.update(semantic_result.state, semantic_result.confidence)
 
             if semantic_result.state == SemanticState.COMPLETE:
+                # v3.6: 记录语义完整时间，不立即结束
+                self._semantic_complete_time = current_time
                 logger.info(f"语义完整: '{text}'")
+
+    def _check_following_input(self, current_time: float) -> bool:
+        """
+        v3.6: 检查是否有后续输入
+
+        在语义VAD判断完整后，检查是否还有后续的音频输入或ASR文本更新。
+        这样可以避免过早结束语音段，同时不会增加太多延迟。
+
+        Args:
+            current_time: 当前时间（毫秒）
+
+        Returns:
+            True: 有后续输入，应该继续等待
+            False: 没有后续输入，可以结束
+        """
+        # 1. 检查ASR是否还在更新
+        # 如果ASR在语义完整后还有更新，说明用户还在说话
+        if self._last_asr_update_time and self._semantic_complete_time:
+            asr_update_after_complete = self._last_asr_update_time - self._semantic_complete_time
+            if asr_update_after_complete > 50:  # 语义完整后50ms内ASR还有更新
+                logger.debug(f"检测到ASR持续更新（{asr_update_after_complete:.0f}ms后），有后续输入")
+                return True
+
+        # 2. 检查音频队列是否有积压
+        # 如果音频队列不为空，说明还有音频等待处理
+        if hasattr(self, '_audio_queue') and not self._audio_queue.empty():
+            logger.debug("检测到音频队列有积压，有后续输入")
+            return True
+
+        # 3. 检查最近是否有语音活动
+        # 如果最近100ms内还有语音活动，说明用户可能还在说话
+        if self._last_speech_time:
+            time_since_speech = current_time - self._last_speech_time
+            if time_since_speech < 100:  # 100ms内还有语音
+                logger.debug(f"检测到最近有语音活动（{time_since_speech:.0f}ms前），有后续输入")
+                return True
+
+        # 4. 检查静音时间
+        # 如果静音时间很短，可能只是自然停顿，继续等待
+        if self._silence_start_time:
+            silence_elapsed = current_time - self._silence_start_time
+            if silence_elapsed < 150:  # 静音不足150ms
+                logger.debug(f"静音时间较短（{silence_elapsed:.0f}ms），可能有后续输入")
+                return True
+
+        return False
+
     async def _finalize_streaming(self) -> Optional[DialogResult]:
         """
         结束流式处理，进入融合阶段
