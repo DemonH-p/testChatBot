@@ -1,10 +1,14 @@
 """
-全双工语音对话系统 v3.0 - Qwen ASR 17B 流式识别模块
+全双工语音对话系统 v3.0 - Qwen ASR 流式识别模块
 
 职责：
 - 流式语音转文本
 - 帧长20ms
 - 实时输出识别结果
+
+支持模型：
+- qwen3-asr-flash: 阿里云Qwen ASR Flash模型
+- paraformer-realtime-v2: Paraformer实时识别模型
 
 注意：此模块独立于语义VAD和情绪识别
 """
@@ -18,6 +22,7 @@ from ..core.logger import logger
 try:
     import dashscope
     from dashscope.audio.asr import Recognition, RecognitionCallback
+    from dashscope import MultiModalConversation
     from dashscope.audio.qwen_omni.omni_realtime import (
         OmniRealtimeConversation,
         OmniRealtimeCallback,
@@ -165,15 +170,19 @@ class OmniAsrCallback(OmniRealtimeCallback):
 
 class QwenASRProcessor:
     """
-    Qwen ASR 17B 流式处理器
+    Qwen ASR 流式处理器
 
-    使用 DashScope Paraformer 实时识别模型
+    支持模型：
+    - qwen3-asr-flash: 阿里云Qwen ASR Flash模型（推荐）
+    - paraformer-realtime-v2: Paraformer实时识别模型
+    - qwen3-asr-flash-realtime: Omni实时识别模型
+
     帧长: 20ms
     流式输出文本结果
     """
 
-    # 使用 Paraformer 实时识别，或基于qwen3-asr-flash-realtime
-    MODEL_NAME = "paraformer-realtime-v2"
+    # 默认使用 qwen3-asr-flash 模型
+    MODEL_NAME = "qwen3-asr-flash"
     FRAME_DURATION_MS = 20  # 帧长20ms
     DEFAULT_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
 
@@ -184,8 +193,11 @@ class QwenASRProcessor:
         self.frame_duration_ms = self.config.get("frame_duration_ms", self.FRAME_DURATION_MS)
         self.url = self.config.get("url", self.DEFAULT_URL)
 
-        self._recognition = None
-        self._conversation = None
+        self._recognition = None  # Recognition 识别器（支持流式音频）
+        self._conversation = None  # OmniRealtimeConversation 识别器（用于 qwen3-omni）
+        self._audio_buffer = bytearray()  # 音频累积缓冲区（用于 qwen3-asr-flash）
+        self._on_result_callback = None  # 结果回调
+        self._loop = None  # 事件循环
         self._callback = None
         self._is_streaming = False
         self._text_buffer = ""
@@ -200,10 +212,41 @@ class QwenASRProcessor:
 
         if self.api_key:
             dashscope.api_key = self.api_key
-            logger.info(f"Qwen ASR 17B 客户端初始化成功 (模型: {self.model}, 帧长: {self.frame_duration_ms}ms)")
+            logger.info(f"Qwen ASR 客户端初始化成功 (模型: {self.model}, 帧长: {self.frame_duration_ms}ms)")
         else:
             logger.warning("未配置 API 密钥，将使用模拟模式")
 
+    async def start_stream_qwen_asr_flash(self, on_result: Optional[Callable] = None) -> bool:
+        """
+        使用 qwen3-asr-flash 模型启动流式识别
+
+        qwen3-asr-flash 是阿里云推出的新一代ASR模型，具有以下特点：
+        - 更快的响应速度
+        - 更高的识别准确率
+        - 支持流式输出
+        - 使用 MultiModalConversation API
+
+        实现方式：
+        1. 累积音频chunk到缓冲区
+        2. 在 stop_stream 时将完整音频发送给API
+        3. 流式返回识别结果
+        """
+        try:
+            # 获取当前事件循环
+            self._loop = asyncio.get_running_loop()
+            self._on_result_callback = on_result
+
+            # 清空音频缓冲区
+            self._audio_buffer = bytearray()
+            self._is_streaming = True
+            self._text_buffer = ""
+
+            logger.info(f"Qwen3 ASR Flash 流式会话已启动 (模型: {self.model}, 使用 MultiModalConversation)")
+            return True
+
+        except Exception as e:
+            logger.error(f"启动 Qwen3 ASR Flash 流式会话失败: {e}")
+            return False
 
     async def start_stream_paraformer(self, on_result: Optional[Callable] = None) -> bool:
         try:
@@ -284,6 +327,8 @@ class QwenASRProcessor:
             try:
                 if self._recognition and self._callback and not self._callback._stopped:
                     self._recognition.stop()
+                if self._conversation and self._callback and not self._callback._stopped:
+                    self._conversation.close()
             except Exception:
                 pass
             self._is_streaming = False
@@ -294,9 +339,15 @@ class QwenASRProcessor:
             self._text_buffer = ""
             return True
 
-        if 'qwen' in self.model:
+        # 根据模型名称选择启动方式
+        if self.model == "qwen3-asr-flash":
+            # qwen3-asr-flash 模型（推荐）
+            return await self.start_stream_qwen_asr_flash(on_result)
+        elif "qwen3-asr" in self.model or "omni" in self.model:
+            # Omni 实时识别模型
             return await self.start_stream_qwen(on_result)
-        else :
+        else:
+            # Paraformer 模型（默认）
             return await self.start_stream_paraformer(on_result)
 
     async def process_chunk(self, audio_chunk: bytes) -> Optional[str]:
@@ -322,15 +373,23 @@ class QwenASRProcessor:
             return await self._mock_process_chunk(audio_chunk)
 
         try:
-            # 发送音频帧到识别器
-            if self._recognition:
+            # 根据模型类型处理音频
+            if self.model == "qwen3-asr-flash":
+                # qwen3-asr-flash: 累积音频到缓冲区
+                self._audio_buffer.extend(audio_chunk)
+                logger.debug(f"[ASR] 累积音频, 当前缓冲区大小: {len(self._audio_buffer)} bytes")
+                return None  # 累积模式不返回部分结果
+            elif self._recognition:
+                # Recognition 类直接接受 bytes 格式
                 self._recognition.send_audio_frame(audio_chunk)
-            if self._conversation:
+                return self._callback.partial_text if self._callback else None
+            elif self._conversation:
+                # OmniRealtimeConversation 需要 base64 格式
                 audio_b64 = base64.b64encode(audio_chunk).decode('ascii')
                 self._conversation.append_audio(audio_b64)
-
-            # 返回当前部分结果
-            return self._callback.partial_text if self._callback else None
+                return self._callback.partial_text if self._callback else None
+            else:
+                return None
 
         except Exception as e:
             logger.error(f"ASR 处理音频块失败: {e}")
@@ -357,26 +416,106 @@ class QwenASRProcessor:
             )
 
         try:
-            # 停止识别
-            if self._recognition and self._callback and not self._callback._stopped:
+            # 根据模型类型处理
+            if self.model == "qwen3-asr-flash":
+                # 使用 MultiModalConversation API 进行识别
+                final_text = await self._recognize_with_multimodal()
+                logger.info(f"ASR 流式会话结束，最终结果: '{final_text}'")
+                return ASRResult(
+                    text=final_text,
+                    confidence=0.95,
+                    is_final=True
+                )
+            elif self._recognition and self._callback and not self._callback._stopped:
+                # 停止 Recognition 识别器
                 self._recognition.stop()
-                
-            if self._conversation and self._callback and not self._callback._stopped:
+                final_text = self._callback.result_text if self._callback else ""
+                logger.info(f"ASR 流式会话结束，最终结果: '{final_text}'")
+                return ASRResult(
+                    text=final_text,
+                    confidence=0.95,
+                    is_final=True
+                )
+            elif self._conversation and self._callback and not self._callback._stopped:
+                # 停止 OmniRealtimeConversation 识别器
                 self._conversation.end_session()
                 self._conversation.close()
-
-            final_text = self._callback.result_text if self._callback else ""
-            logger.info(f"ASR 流式会话结束，最终结果: '{final_text}'")
-
-            return ASRResult(
-                text=final_text,
-                confidence=0.95,
-                is_final=True
-            )
+                final_text = self._callback.result_text if self._callback else ""
+                logger.info(f"ASR 流式会话结束，最终结果: '{final_text}'")
+                return ASRResult(
+                    text=final_text,
+                    confidence=0.95,
+                    is_final=True
+                )
+            else:
+                return ASRResult(text="", confidence=0.5, is_final=True)
 
         except Exception as e:
             logger.error(f"停止 ASR 流式会话失败: {e}")
             return ASRResult(text="", confidence=0.5, is_final=True)
+
+    async def _recognize_with_multimodal(self) -> str:
+        """
+        使用 MultiModalConversation API 识别累积的音频
+
+        Returns:
+            识别的文本结果
+        """
+        if len(self._audio_buffer) == 0:
+            logger.warning("音频缓冲区为空，跳过识别")
+            return ""
+
+        try:
+            # 将累积的音频转换为 base64
+            audio_bytes = bytes(self._audio_buffer)
+            audio_b64 = base64.b64encode(audio_bytes).decode('ascii')
+
+            # 构建 data URL 格式
+            # PCM 16kHz 16-bit mono
+            audio_url = f"data:audio/pcm;rate=16000;base64,{audio_b64}"
+
+            logger.info(f"开始 MultiModalConversation 识别, 音频大小: {len(audio_bytes)} bytes")
+
+            # 调用 MultiModalConversation API
+            messages = [
+                {"role": "user", "content": [{"audio": audio_url}]}
+            ]
+
+            response = MultiModalConversation.call(
+                api_key=self.api_key,
+                model=self.model,
+                messages=messages,
+                result_format="message",
+                asr_options={
+                    "enable_itn": False
+                },
+                stream=True
+            )
+
+            # 流式处理结果
+            full_text = ""
+            for chunk in response:
+                try:
+                    text = chunk["output"]["choices"][0]["message"].content[0]["text"]
+                    if text:
+                        full_text = text
+                        # 流式回调通知
+                        if self._on_result_callback and self._loop:
+                            self._loop.call_soon_threadsafe(
+                                lambda t=text: asyncio.create_task(
+                                    self._on_result_callback(t, is_final=False)
+                                )
+                            )
+                        logger.debug(f"MultiModalConversation 流式结果: {text}")
+                except (KeyError, IndexError, TypeError):
+                    pass
+
+            logger.info(f"MultiModalConversation 识别完成: '{full_text}'")
+            return full_text
+
+        except Exception as e:
+            logger.error(f"MultiModalConversation 识别失败: {e}")
+            return ""
 
     async def process_segment(self, audio: AudioSegment) -> ASRResult:
         """
