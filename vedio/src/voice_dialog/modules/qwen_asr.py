@@ -407,6 +407,10 @@ class QwenASRProcessor:
 
         self._is_streaming = False
 
+        # 调试：保存累积的音频到本地
+        if self.model == "qwen3-asr-flash" and len(self._audio_buffer) > 0:
+            self.save_audio_to_file(format="wav")
+
         if not HAS_DASHSCOPE or not self.api_key:
             # 模拟模式
             return ASRResult(
@@ -515,6 +519,60 @@ class QwenASRProcessor:
 
         except Exception as e:
             logger.error(f"MultiModalConversation 识别失败: {e}")
+            return ""
+
+    def save_audio_to_file(self, filepath: str = None, format: str = "wav") -> str:
+        """
+        保存累积的音频到本地文件
+
+        Args:
+            filepath: 保存路径，默认自动生成
+            format: 保存格式，支持 "wav" 或 "pcm"
+
+        Returns:
+            保存的文件路径
+        """
+        import wave
+        from datetime import datetime
+
+        if len(self._audio_buffer) == 0:
+            logger.warning("音频缓冲区为空，无法保存")
+            return ""
+
+        # 生成默认文件名
+        if filepath is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filepath = f"debug_audio_{timestamp}.{format}"
+
+        audio_bytes = bytes(self._audio_buffer)
+        sample_rate = 16000
+
+        try:
+            if format == "wav":
+                # 保存为 WAV 格式（可以用播放器直接播放）
+                with wave.open(filepath, 'wb') as wf:
+                    wf.setnchannels(1)  # 单声道
+                    wf.setsampwidth(2)  # 16-bit
+                    wf.setframerate(sample_rate)
+                    wf.writeframes(audio_bytes)
+            else:
+                # 保存为 PCM 原始格式
+                with open(filepath, 'wb') as f:
+                    f.write(audio_bytes)
+
+            # 计算音频时长
+            duration_ms = len(audio_bytes) / sample_rate / 2 * 1000
+
+            logger.info(f"音频已保存: {filepath}")
+            logger.info(f"  - 格式: {format.upper()}")
+            logger.info(f"  - 采样率: {sample_rate} Hz")
+            logger.info(f"  - 时长: {duration_ms:.0f} ms")
+            logger.info(f"  - 大小: {len(audio_bytes)} bytes")
+
+            return filepath
+
+        except Exception as e:
+            logger.error(f"保存音频失败: {e}")
             return ""
 
     async def process_segment(self, audio: AudioSegment) -> ASRResult:

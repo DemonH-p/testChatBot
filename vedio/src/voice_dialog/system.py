@@ -151,6 +151,19 @@ class VoiceDialogSystem:
 
         logger.info("语音对话系统v3.5初始化完成 - 流式架构 + 语义打断 + 并发音频处理")
 
+    def save_audio_to_file(self, filepath: str = None, format: str = "wav") -> str:
+        """
+        保存累积的音频到本地文件
+
+        Args:
+            filepath: 保存路径，默认自动生成
+            format: 保存格式，支持 "wav" 或 "pcm"
+
+        Returns:
+            保存的文件路径
+        """
+        return self.asr_processor.save_audio_to_file(filepath, format)
+
     async def process_audio(self, audio_chunk: bytes) -> Optional[DialogResult]:
         """
         处理音频块 - v3.5 并发架构
