@@ -323,10 +323,10 @@ class VoiceDialogSystem:
                 should_finalize = True
                 finalize_reason = "静音+文本充足"
 
-            # # 条件4: 静音超过最大阈值，强制结束（不依赖ASR文本，解决qwen3-asr-flash累积模式问题）
-            # elif silence_elapsed >= self.MAX_SILENCE_WAIT_MS:
-            #     should_finalize = True
-            #     finalize_reason = f"静音超时强制结束({silence_elapsed:.0f}ms)"
+            # 条件4: 静音超过最大阈值，强制结束（qwen3-asr-flash累积模式，无ASR文本时强制结束）
+            elif silence_elapsed >= self.MAX_SILENCE_WAIT_MS:
+                should_finalize = True
+                finalize_reason = f"静音超时强制结束({silence_elapsed:.0f}ms)"
 
             if should_finalize:
                 logger.info(f"结束语音段: {finalize_reason}, 文本: '{self._asr_text_buffer}'")
