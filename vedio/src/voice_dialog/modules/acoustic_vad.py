@@ -283,7 +283,7 @@ class AcousticVAD:
         is_speech = self._detect_speech(audio_frame)
 
         # 调试日志：显示VAD检测结果
-        logger.debug(f"声学VAD: is_speech={is_speech}, silence_frames={self._silence_frames}/{self.silence_threshold_frames}")
+        # logger.debug(f"声学VAD: is_speech={is_speech}, silence_frames={self._silence_frames}/{self.silence_threshold_frames}")
 
         if is_speech:
             self._silence_frames = 0

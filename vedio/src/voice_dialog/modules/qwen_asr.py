@@ -202,6 +202,10 @@ class QwenASRProcessor:
         self._is_streaming = False
         self._text_buffer = ""
 
+        # 定期识别配置（用于 qwen3-asr-flash）
+        self._partial_recognize_threshold = 32768  # 触发部分识别的音频大小阈值（32KB ≈ 1秒音频）
+        self._last_partial_text = ""  # 上次部分识别结果
+
         self._init_client()
 
     def _init_client(self):
@@ -240,6 +244,7 @@ class QwenASRProcessor:
             self._audio_buffer = bytearray()
             self._is_streaming = True
             self._text_buffer = ""
+            self._last_partial_text = ""  # 重置部分识别结果
 
             logger.info(f"Qwen3 ASR Flash 流式会话已启动 (模型: {self.model}, 使用 MultiModalConversation)")
             return True
@@ -377,8 +382,18 @@ class QwenASRProcessor:
             if self.model == "qwen3-asr-flash":
                 # qwen3-asr-flash: 累积音频到缓冲区
                 self._audio_buffer.extend(audio_chunk)
-                logger.debug(f"[ASR] 累积音频, 当前缓冲区大小: {len(self._audio_buffer)} bytes")
-                return None  # 累积模式不返回部分结果
+                buffer_size = len(self._audio_buffer)
+                logger.debug(f"[ASR] 累积音频, 当前缓冲区大小: {buffer_size} bytes")
+
+                # 定期识别：当缓冲区达到阈值时，进行部分识别
+                if buffer_size >= self._partial_recognize_threshold:
+                    partial_text = await self._recognize_partial()
+                    if partial_text and partial_text != self._last_partial_text:
+                        self._last_partial_text = partial_text
+                        logger.info(f"[ASR] 部分识别结果: '{partial_text}'")
+                        return partial_text
+
+                return None  # 未达到阈值，不返回结果
             elif self._recognition:
                 # Recognition 类直接接受 bytes 格式
                 self._recognition.send_audio_frame(audio_chunk)
@@ -519,6 +534,53 @@ class QwenASRProcessor:
 
         except Exception as e:
             logger.error(f"MultiModalConversation 识别失败: {e}")
+            return ""
+
+    async def _recognize_partial(self) -> str:
+        """
+        部分识别：对当前累积的音频进行识别（用于定期返回部分结果）
+
+        Returns:
+            识别的文本结果
+        """
+        if len(self._audio_buffer) == 0:
+            return ""
+
+        try:
+            # 将累积的音频转换为 base64
+            audio_bytes = bytes(self._audio_buffer)
+            audio_b64 = base64.b64encode(audio_bytes).decode('ascii')
+
+            # 构建 data URL 格式
+            audio_url = f"data:audio/pcm;rate=16000;base64,{audio_b64}"
+
+            logger.debug(f"部分识别: 音频大小 {len(audio_bytes)} bytes")
+
+            # 调用 MultiModalConversation API
+            messages = [
+                {"role": "user", "content": [{"audio": audio_url}]}
+            ]
+
+            response = MultiModalConversation.call(
+                api_key=self.api_key,
+                model=self.model,
+                messages=messages,
+                result_format="message",
+                asr_options={
+                    "enable_itn": False
+                },
+                stream=False  # 非流式，快速获取结果
+            )
+
+            # 提取结果
+            if response and response.get("output"):
+                text = response["output"]["choices"][0]["message"].content[0].get("text", "")
+                return text
+
+            return ""
+
+        except Exception as e:
+            logger.error(f"部分识别失败: {e}")
             return ""
 
     def save_audio_to_file(self, filepath: str = None, format: str = "wav") -> str:

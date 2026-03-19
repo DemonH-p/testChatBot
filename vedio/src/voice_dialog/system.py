@@ -151,19 +151,6 @@ class VoiceDialogSystem:
 
         logger.info("语音对话系统v3.5初始化完成 - 流式架构 + 语义打断 + 并发音频处理")
 
-    def save_audio_to_file(self, filepath: str = None, format: str = "wav") -> str:
-        """
-        保存累积的音频到本地文件
-
-        Args:
-            filepath: 保存路径，默认自动生成
-            format: 保存格式，支持 "wav" 或 "pcm"
-
-        Returns:
-            保存的文件路径
-        """
-        return self.asr_processor.save_audio_to_file(filepath, format)
-
     async def process_audio(self, audio_chunk: bytes) -> Optional[DialogResult]:
         """
         处理音频块 - v3.5 并发架构
@@ -335,6 +322,11 @@ class VoiceDialogSystem:
             elif silence_elapsed >= self.SILENCE_THRESHOLD_MS and len(self._asr_text_buffer) >= 5:
                 should_finalize = True
                 finalize_reason = "静音+文本充足"
+
+            # # 条件4: 静音超过最大阈值，强制结束（不依赖ASR文本，解决qwen3-asr-flash累积模式问题）
+            # elif silence_elapsed >= self.MAX_SILENCE_WAIT_MS:
+            #     should_finalize = True
+            #     finalize_reason = f"静音超时强制结束({silence_elapsed:.0f}ms)"
 
             if should_finalize:
                 logger.info(f"结束语音段: {finalize_reason}, 文本: '{self._asr_text_buffer}'")
@@ -591,10 +583,16 @@ class VoiceDialogSystem:
 
     async def _process_audio_parallel(self, audio_chunk: bytes):
         """并行处理音频"""
-        await asyncio.gather(
-            self.asr_processor.process_chunk(audio_chunk),
-            self.emotion_recognizer.process_audio(audio_chunk)
-        )
+        # 并行执行ASR和情绪识别
+        asr_task = self.asr_processor.process_chunk(audio_chunk)
+        emotion_task = self.emotion_recognizer.process_audio(audio_chunk)
+        
+        # 等待结果
+        asr_result, _ = await asyncio.gather(asr_task, emotion_task)
+        
+        # 处理ASR部分识别结果（qwen3-asr-flash定期识别返回的结果）
+        if asr_result:
+            await self._on_asr_result(asr_result, is_final=False)
 
     async def _on_asr_result(self, text: str, is_final: bool):
         """ASR流式结果回调"""
@@ -660,27 +658,24 @@ class VoiceDialogSystem:
                 logger.debug(f"检测到ASR持续更新（{asr_update_after_complete:.0f}ms后），有后续输入")
                 return True
 
-        # 2. 检查音频队列是否有积压
-        # 如果音频队列不为空，说明还有音频等待处理
-        if hasattr(self, '_audio_queue') and not self._audio_queue.empty():
-            logger.debug("检测到音频队列有积压，有后续输入")
-            return True
-
-        # 3. 检查最近是否有语音活动
-        # 如果最近100ms内还有语音活动，说明用户可能还在说话
+        # 2. 检查最近是否有语音活动（基于声学VAD）
+        # 如果最近200ms内还有语音活动，说明用户可能还在说话
         if self._last_speech_time:
             time_since_speech = current_time - self._last_speech_time
-            if time_since_speech < 100:  # 100ms内还有语音
+            if time_since_speech < 200:  # 200ms内还有语音
                 logger.debug(f"检测到最近有语音活动（{time_since_speech:.0f}ms前），有后续输入")
                 return True
 
-        # 4. 检查静音时间
+        # 3. 检查静音时间
         # 如果静音时间很短，可能只是自然停顿，继续等待
         if self._silence_start_time:
             silence_elapsed = current_time - self._silence_start_time
-            if silence_elapsed < 150:  # 静音不足150ms
+            if silence_elapsed < 200:  # 静音不足200ms
                 logger.debug(f"静音时间较短（{silence_elapsed:.0f}ms），可能有后续输入")
                 return True
+
+        # 注意：不再检查音频队列是否为空，因为队列中可能包含静音音频
+        # 应该基于声学VAD的语音检测结果来判断
 
         return False
 
